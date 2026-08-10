@@ -1,0 +1,46 @@
+name: 'Deploy HF Space'
+description: 'Renders and pushes a ChaBo component (orchestrator or qdrant) to its HF Space'
+
+inputs:
+  component:
+    description: 'orchestrator or qdrant'
+    required: true
+  hf_space:
+    description: 'org/space-name on huggingface.co'
+    required: true
+  image_tag:
+    description: 'Published chabo-rag-orchestrator tag (required for component=orchestrator, unused for qdrant — its version is this repo''s own tag)'
+    required: false
+    default: ''
+  title:
+    description: 'HF Space README frontmatter title'
+    required: true
+  extra_content_path:
+    description: 'Path, relative to the CALLING repo''s checkout, to overlay into the render (e.g. orchestrator/instance_config)'
+    required: false
+    default: ''
+  hf_token:
+    description: 'HF token with write access to hf_space'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Render
+      shell: bash
+      run: |
+        "${GITHUB_ACTION_PATH}/render.sh" \
+          "${{ inputs.component }}" \
+          "${RUNNER_TEMP}/render-${{ inputs.component }}" \
+          "${{ inputs.image_tag }}" \
+          "${{ inputs.title }}" \
+          "${{ inputs.extra_content_path }}"
+
+    - name: Push to HF Space
+      shell: bash
+      env:
+        HF_TOKEN: ${{ inputs.hf_token }}
+      run: |
+        "${GITHUB_ACTION_PATH}/push.sh" \
+          "${{ inputs.hf_space }}" \
+          "${RUNNER_TEMP}/render-${{ inputs.component }}"

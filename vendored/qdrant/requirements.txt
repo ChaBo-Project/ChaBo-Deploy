@@ -1,0 +1,4 @@
+qdrant-client==1.17.1
+datasets==4.4.1
+numpy==2.4.6
+gradio==5.50.0

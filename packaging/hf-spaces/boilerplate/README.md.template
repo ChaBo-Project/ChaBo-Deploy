@@ -1,0 +1,14 @@
+---
+title: "{{TITLE}}"
+emoji: 🌾
+colorFrom: green
+colorTo: blue
+sdk: docker
+app_port: {{APP_PORT}}
+pinned: false
+---
+
+# {{TITLE}}
+
+Deployed by ChaBo-Deploy's `deploy-hf-space` action. Do not edit files in this Space
+directly — the next deploy from the owning instance repo overwrites them.
