@@ -99,3 +99,31 @@ same as before. To actually separate them (recommended once something else in yo
 pipeline does ingestion with the admin key), set `QDRANT_READ_ONLY_API_KEY` in `.env` to
 a second, distinct secret; `chabo` picks it up automatically and the admin key stays
 reserved for whatever writes to Qdrant.
+
+## Payload format required by the orchestrator (for anyone ingesting data)
+
+This topology doesn't ingest data itself (see "Network exposure" above) — whatever does
+must write points matching the shape `chabo`'s retriever actually reads
+(`retriever_orchestrator.py` in `ChaBo-Orchestrator`):
+
+```json
+{
+  "text": "chunk content here...",
+  "metadata": {
+    "crop_type": ["maize", "wheat"],
+    "title": "Some Document Title",
+    "filename": "...", "project_id": "...", "document_source": "...", "page": 3
+  }
+}
+```
+
+- **`text`** — the chunk content. Falls back to a `page_content` key if `text` is absent
+  (LangChain convention), but prefer `text`.
+- **`metadata`** — a single nested object holding *everything* else: both filterable
+  fields (`instance_config`'s `[metadata_filters] filterable_fields`, e.g. `crop_type`,
+  `title` above) and display-only fields read by the generator
+  (`[generator] CONTEXT_META_FIELDS`/`TITLE_META_FIELDS`).
+- **Filterable fields must sit at the root of `metadata`, exactly one level deep** — the
+  filter-building code only ever queries `metadata.<field>` (a single dot). Nesting a
+  filterable field any deeper (e.g. `metadata.custom.crop_type`) means it will never
+  match a query filter, silently.
