@@ -17,8 +17,13 @@ QDRANT_HOST = os.getenv("QDRANT_HOST", "127.0.0.1")
 QDRANT_PORT = int(os.getenv("QDRANT_PORT", 6333))
 # Default collection name is set in start.sh/initialize_qdrant.py
 DEFAULT_COLLECTION_NAME = os.getenv("COLLECTION_NAME")
-# The Qdrant API key is optional here if not set, as it's a local connection
-QDRANT_API_KEY = os.getenv("QDRANT__SERVICE__API_KEY")
+# Prefers a dedicated read-only key if the Space sets one — this wrapper only ever
+# calls query_points() (see below), never writes to Qdrant, so it doesn't need the
+# admin key that initialize_qdrant.py uses for its one-time load. Falls back to the
+# admin key if no read-only key is configured (same default-shared-key behavior as
+# the compose topology's QDRANT_READ_ONLY_API_KEY — see compose/README.md's
+# "Qdrant API keys").
+QDRANT_API_KEY = os.getenv("QDRANT__SERVICE__READ_ONLY_API_KEY", os.getenv("QDRANT__SERVICE__API_KEY"))
 DEFAULT_TOP_K = int(os.getenv("TOP_K", 10))
 
 def get_qdrant_client() -> QdrantClient:

@@ -1,17 +1,21 @@
 # docker-compose-vm topology
 
-Deploys the ChaBo orchestrator (+ optionally Qdrant, TEI, an input-guard classifier, and
-ChatUI) as co-located containers on a single VM via `docker compose`. This is the
-alternative to the `hf-spaces` topology (`vendored/qdrant/`, `templates/orchestrator.Dockerfile`,
-`.github/actions/deploy-hf-space/`), which deploys the orchestrator and a Gradio-wrapped
-Qdrant as two separate Hugging Face Spaces.
+Deploys the ChaBo orchestrator + optional self-hosted infra (vector DB, embedding/
+reranking, guardrail classifier, ChatUI) as co-located containers on a single VM via
+`docker compose` — the alternative to the `hf-spaces` topology.
 
-Unlike the HF-Spaces topology, `chabo` here pulls the already-published
-`ghcr.io/chabo-project/chabo-rag-orchestrator` image directly and mounts the instance's
-`instance_config/` as a read-only volume — no per-instance image build required.
+`chabo` pulls the already-published `ghcr.io/chabo-project/chabo-rag-orchestrator` image
+directly and mounts the instance's `instance_config/` as a read-only volume — no
+per-instance image build required.
 
 ## Usage
 
+0. Obtain this content at a pinned version — this repo uses a `compose-vX.Y.Z` tag
+   namespace independent of the `hf-spaces` topology's tags (see root `README.md`'s
+   "Versioning"):
+   ```bash
+   git clone --branch compose-vX.Y.Z https://github.com/ChaBo-Project/ChaBo-Deploy
+   ```
 1. Copy `.env.example` to `.env` in your instance repo, filling in `ORCHESTRATOR_TAG`,
    `INSTANCE_CONFIG_PATH`, `HF_TOKEN`, `QDRANT_API_KEY`, and `COMPOSE_PROFILES`.
 2. If using the `chatui` profile, copy `chatui.env.local.template` to `chatui.env.local`
@@ -27,19 +31,19 @@ Unlike the HF-Spaces topology, `chabo` here pulls the already-published
 
 ## Profiles
 
-| Profile          | Service(s)     | When to use |
-|------------------|----------------|-------------|
-| `infra`          | `qdrant`       | Self-hosting Qdrant on this VM instead of a remote/managed instance |
-| `local`          | `tei-embedding` | Self-hosting embedding instead of a remote HF endpoint |
-| `local-reranker` | `tei-reranker` | Self-hosting reranking instead of a remote HF endpoint — only start this if `instance_config`'s `[retrieval] reranker_enabled = true`; the orchestrator skips reranking entirely when that flag is `false`, so there's no point running an idle reranker container in that case |
-| `guard`          | `qwen3guard`   | `[input_guard] mode = classifier` |
-| `chatui`         | `chatui`       | Deploying ChaBo-ChatUI alongside the orchestrator on this VM |
+| Profile           | Service(s)      | When to use |
+|-------------------|-----------------|-------------|
+| `vectordb`        | `qdrant`        | Self-hosting Qdrant on this VM instead of a remote/managed instance |
+| `local-embedding` | `tei-embedding` | Self-hosting embedding instead of a remote HF endpoint |
+| `local-reranker`  | `tei-reranker`  | Self-hosting reranking instead of a remote HF endpoint — only start this if `instance_config`'s `[retrieval] reranker_enabled = true`; the orchestrator skips reranking entirely when that flag is `false`, so there's no point running an idle reranker container in that case |
+| `guard`           | `qwen3guard`    | `[input_guard]` and/or `[output_guard]` `mode = classifier` — both can point at the same `http://qwen3guard:8000` |
+| `chatui`          | `chatui`        | Deploying ChaBo-ChatUI alongside the orchestrator on this VM |
 
-`local` and `local-reranker` are independent — reranking is a genuinely optional pipeline
-stage in the orchestrator (`[retrieval] reranker_enabled`, default `true`; when `false` no
-reranker endpoint is ever called, with a safe fallback to vector-search order even if a
-live reranker call fails). Activate both (`COMPOSE_PROFILES=local,local-reranker`) for the
-previous all-local behavior, or just `local` for local embedding with a remote/no reranker.
+`local-embedding` and `local-reranker` are independent — reranking is a genuinely optional
+pipeline stage (`[retrieval] reranker_enabled`, default `true`; when `false` no reranker
+endpoint is ever called, with a safe fallback to vector-search order even if a live call
+fails). Activate both for the previous all-local behavior, or just `local-embedding` for
+local embedding with a remote/no reranker.
 
 Scope note: this topology ships deployable artifacts only (Dockerfiles + a
 docker-compose template) — there is no automated remote-deploy mechanism here yet
@@ -58,10 +62,9 @@ firewall) — exposure with no corresponding benefit, since nothing outside the 
 network needs to reach them.
 
 `qdrant` **is** published (6333/6334), unlike those three — on purpose, not an oversight.
-Nothing in this repo ingests data into it (unlike the `hf-spaces` topology's
-`vendored/qdrant/`, which self-loads from an HF dataset on boot); an external ingestion
-process is expected to connect to Qdrant's API directly, so it has to be reachable from
-outside the compose network. It's protected by the API keys described below, but that's
+Nothing in this compose file ingests data into it; an external ingestion process is
+expected to connect to Qdrant's API directly, so it has to be reachable from outside the
+compose network. It's protected by the API keys described below, but that's
 an application-layer check on top of an otherwise-open port, with no TLS in front of it —
 **restrict who can actually reach 6333/6334 at the VM firewall level** (ideally to known
 ingestion sources only, not the open internet), same as you would for any other
@@ -127,3 +130,31 @@ must write points matching the shape `chabo`'s retriever actually reads
   filter-building code only ever queries `metadata.<field>` (a single dot). Nesting a
   filterable field any deeper (e.g. `metadata.custom.crop_type`) means it will never
   match a query filter, silently.
+
+### Minimal ingestion example
+
+Reads a parquet file with `id`/`vector`/`payload` columns (matching the shape above) and
+upserts it, tested against a real stack:
+
+```python
+import numpy as np, pandas as pd
+from qdrant_client import QdrantClient, models
+
+def to_native(o):  # numpy scalars/arrays from pandas break Qdrant's serializer otherwise
+    if isinstance(o, dict): return {k: to_native(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple, np.ndarray)): return [to_native(v) for v in o]
+    return o.item() if isinstance(o, np.generic) else o
+
+client = QdrantClient(host="localhost", port=6333, api_key="<QDRANT_API_KEY>", https=False)
+COLLECTION, SIZE, BATCH = "test", 1024, 200
+
+if not client.collection_exists(COLLECTION):
+    client.create_collection(COLLECTION, vectors_config=models.VectorParams(size=SIZE, distance=models.Distance.COSINE))
+
+points = [
+    models.PointStruct(id=int(r["id"]), vector=[float(x) for x in r["vector"]], payload=to_native(r["payload"]))
+    for _, r in pd.read_parquet("data.parquet").iterrows()
+]
+for i in range(0, len(points), BATCH):
+    client.upsert(collection_name=COLLECTION, points=points[i : i + BATCH])
+```

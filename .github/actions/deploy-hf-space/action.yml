@@ -1,15 +1,15 @@
 name: 'Deploy HF Space'
-description: 'Renders and pushes a ChaBo component (orchestrator or qdrant) to its HF Space'
+description: 'Renders and pushes a ChaBo component (orchestrator, qdrant, or chatui) to its HF Space'
 
 inputs:
   component:
-    description: 'orchestrator or qdrant'
+    description: 'orchestrator, qdrant, or chatui'
     required: true
   hf_space:
     description: 'org/space-name on huggingface.co'
     required: true
   image_tag:
-    description: 'Published chabo-rag-orchestrator tag (required for component=orchestrator, unused for qdrant — its version is this repo''s own tag)'
+    description: 'Published image tag to deploy: chabo-rag-orchestrator tag (required for component=orchestrator) or hf-chat-ui tag (optional for component=chatui, defaults to the pinned version). Unused for component=qdrant — its version is this repo''s own tag.'
     required: false
     default: ''
   title:

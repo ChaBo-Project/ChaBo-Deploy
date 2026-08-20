@@ -1,40 +1,26 @@
 services:
   qdrant:
-    profiles: ["infra"]
+    profiles: ["vectordb"]
     build:
-      context: ../vendored/qdrant-native
-      dockerfile: Dockerfile
-    # Published — unlike the other backend services below, this needs to be reachable
-    # from outside the compose network: nothing in this repo ingests data into Qdrant
-    # (unlike the hf-spaces topology's vendored/qdrant/, which self-loads from an HF
-    # dataset on boot), so an external ingestion process is expected to connect to this
-    # API directly. Protected by the API keys below, but that's an application-layer
-    # check over what's otherwise an open port — restrict who can actually reach 6333/6334
-    # at the VM firewall level (ideally to known ingestion sources only), and note that
-    # without TLS here (see compose/README.md "Qdrant API keys"), the key itself travels
-    # in cleartext to whoever you do let through.
+      context: .
+      dockerfile: qdrant-native.Dockerfile
+    # Published — an external ingestion process needs to reach Qdrant directly, nothing
+    # in this compose file writes to it. App-layer key auth only, no TLS — restrict
+    # 6333/6334 to known ingestion sources at the VM firewall (see README "Qdrant API keys").
     ports:
       - "6333:6333"
       - "6334:6334"
     environment:
-      # Without these, self-hosted Qdrant is unauthenticated on ports published to the
-      # host. Qdrant supports two key types (see
-      # https://qdrant.tech/documentation/guides/security/#authentication):
-      #   - api_key            — admin, full read/write access to all collections.
-      #     Needed by whatever does ingestion (not run by this compose file).
-      #   - read_only_api_key  — read-only access to all collections. `chabo` only ever
-      #     calls query_points() (see compose/README.md) — it never needs the admin key.
-      # Both default to the same value below (QDRANT_API_KEY) so this is a drop-in,
-      # nothing-changes-by-default setup. To actually separate them, set
-      # QDRANT_READ_ONLY_API_KEY in .env to a second, distinct secret — chabo (below)
-      # then automatically switches to it, and the admin key stays reserved for ingestion.
+      # api_key = admin (read/write), read_only_api_key = query-only. Both default to
+      # QDRANT_API_KEY below; set QDRANT_READ_ONLY_API_KEY in .env to separate them —
+      # see README "Qdrant API keys".
       - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY}
       - QDRANT__SERVICE__READ_ONLY_API_KEY=${QDRANT_READ_ONLY_API_KEY:-${QDRANT_API_KEY}}
     volumes:
       - qdrant_data:/data
 
   tei-embedding:
-    profiles: ["local"]
+    profiles: ["local-embedding"]
     platform: linux/amd64
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9.3
     # For GPU, use: ghcr.io/huggingface/text-embeddings-inference:1.9.3
@@ -44,11 +30,13 @@ services:
       - tei-embedding-data:/data
     command: --model-id ${TEI_EMBEDDING_MODEL:-BAAI/bge-m3}
     healthcheck:
+      # bge-m3 CPU warmup can take several minutes — budget generously so this isn't
+      # marked unhealthy mid-warmup.
       test: ["CMD", "curl", "-f", "http://localhost:80/health"]
       interval: 15s
       timeout: 10s
-      retries: 10
-      start_period: 30s
+      retries: 40
+      start_period: 60s
 
   tei-reranker:
     profiles: ["local-reranker"]
@@ -61,19 +49,17 @@ services:
       - tei-reranker-data:/data
     command: --model-id ${TEI_RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}
     healthcheck:
+      # Same reasoning as tei-embedding's healthcheck above.
       test: ["CMD", "curl", "-f", "http://localhost:80/health"]
       interval: 15s
       timeout: 10s
-      retries: 10
-      start_period: 30s
+      retries: 40
+      start_period: 60s
 
-  # INPUT GUARDRAIL CLASSIFIER
-  # Opt-in via the "guard" profile
-  # only needed when [input_guard] mode=classifier. Qwen3Guard-Gen is a lightweight
-  # generative model served over an OpenAI-compatible API (vLLM).
-  # Point ChaBo at it with [input_guard] endpoint_url = http://qwen3guard:8000.
-  # The default image is GPU; for CPU-only hosts use a CPU/vLLM-CPU build or a
-  # llama.cpp GGUF server (e.g. QuantFactory/Qwen3Guard-Gen-0.6B-GGUF).
+  # GUARDRAIL CLASSIFIER — opt-in via the "guard" profile, used by [input_guard] and/or
+  # [output_guard] mode=classifier (point either/both at http://qwen3guard:8000). GPU
+  # image by default; for CPU-only hosts use a CPU/vLLM-CPU build or a llama.cpp GGUF
+  # server (e.g. QuantFactory/Qwen3Guard-Gen-0.6B-GGUF).
   qwen3guard:
     profiles: ["guard"]
     image: vllm/vllm-openai:v0.27.1
@@ -92,12 +78,11 @@ services:
       start_period: 60s
 
   chabo:
-    # Published, already-built orchestrator image — no application source lives in
-    # ChaBo-Deploy (see Guidelines A3.4). Pin an explicit tag; no :latest is published.
+    # Published orchestrator image, pinned tag (no :latest published) — no application
+    # source lives in ChaBo-Deploy (Guidelines A3.4).
     image: ghcr.io/chabo-project/chabo-rag-orchestrator:${ORCHESTRATOR_TAG:?ORCHESTRATOR_TAG must be set, e.g. 0.9.1}
     depends_on:
-      # required: false so `docker compose up chabo` doesn't fail when the "local"/
-      # "local-reranker"/"guard" profiles that own these services aren't active.
+      # required: false — don't fail `docker compose up chabo` when these profiles are off.
       tei-embedding:
         condition: service_healthy
         required: false
@@ -111,13 +96,10 @@ services:
     ports:
       - "7860:7860"
     environment:
-      # Required by the orchestrator even for fully self-hosted, non-HF deployments (see
-      # compose/README.md "No Hugging Face access?") — any placeholder value works for
-      # HF_TOKEN if nothing HF-hosted is actually used.
+      # Required even for self-hosted, non-HF setups — any placeholder value works if
+      # nothing HF-hosted is configured (see README "No Hugging Face access?").
       - HF_TOKEN=${HF_TOKEN:?HF_TOKEN must be set}
-      # Prefers QDRANT_READ_ONLY_API_KEY if you've set one (chabo only ever queries
-      # Qdrant, never writes — see the qdrant service's environment block above for why);
-      # falls back to the admin QDRANT_API_KEY otherwise.
+      # Prefers the read-only key if set, else the admin key (chabo only ever queries).
       - QDRANT_API_KEY=${QDRANT_READ_ONLY_API_KEY:-${QDRANT_API_KEY:?QDRANT_API_KEY must be set}}
       - INSTANCE_CONFIG_DIR=/app/instance_config
       # Uncomment if using alternative LLM providers:
@@ -138,10 +120,11 @@ services:
     build:
       context: .
       dockerfile: chatui.Dockerfile
+      args:
+        CHATUI_TAG: ${CHATUI_TAG:-0.9.4-chabo}
     ports:
       - "3000:3000"
-    # For testing in non-HTTPS environments, set UI_ORIGIN in .env to the public IP or
-    # domain name, then enable this:
+    # Non-HTTPS testing: set UI_ORIGIN in .env, then enable this:
     # environment:
     #   - ORIGIN=${UI_ORIGIN}
     volumes:
