@@ -1,8 +1,8 @@
 ---
 title: "{{TITLE}}"
-emoji: 🌾
-colorFrom: green
-colorTo: blue
+emoji: 🤖
+colorFrom: {{COLOR_FROM}}
+colorTo: {{COLOR_TO}}
 sdk: docker
 app_port: {{APP_PORT}}
 pinned: false
