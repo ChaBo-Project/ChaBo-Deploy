@@ -18,6 +18,10 @@ per-instance image build required.
    ```
 1. Copy `.env.example` to `.env` in your instance repo, filling in `ORCHESTRATOR_TAG`,
    `INSTANCE_CONFIG_PATH`, `HF_TOKEN`, `QDRANT_API_KEY`, and `COMPOSE_PROFILES`.
+   `INSTANCE_CONFIG_PATH` needs to point at a real `instance_config/` directory — copy
+   `compose/instance_config.example/` as a starting point (`params.override.cfg` and
+   `instance.yaml` are both fully documented inline: what's required vs. optional, and
+   why). `prompt_overrides.md` is also included, though optional and inert by default.
 2. If using the `chatui` profile, copy `chatui.env.local.template` to `chatui.env.local`
    and customize (model display name, prompt template, disclaimers).
 3. Run:
@@ -28,6 +32,14 @@ per-instance image build required.
    `.env.example` for the list). Leaving it empty starts only `chabo`, pointed at
    whatever remote Qdrant/embedding/reranker endpoints
    `instance_config/params.override.cfg` configures.
+
+## Prerequisites
+
+Docker and Docker Compose (v2, the `docker compose` subcommand). If you're on Docker
+Desktop with a WSL2 backend, raise its memory limit before enabling `local-embedding`
+or `local-reranker` — CPU warmup of a real embedding/reranker model can OOM-kill the
+container under a default WSL2 memory cap; 12GB was enough in our own testing. No such
+requirement for `vectordb`, `guard`, or `chatui` alone.
 
 ## Profiles
 
