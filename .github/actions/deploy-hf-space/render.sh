@@ -35,11 +35,8 @@ case "$component" in
   chatui)
     # cp only the runtime files — hf-spaces/chatui/env.local.template is a reference for
     # setting the DOTENV_LOCAL Space secret by hand, not something to push into the Space.
-    # image_tag is optional here (unlike orchestrator, where it's required) — defaults to
-    # the last-known-good hf-chat-ui tag so an instance can stay on the default without
-    # having to pass anything.
-    chatui_tag="${image_tag:-0.9.4-chabo}"
-    sed "s|{{TAG}}|${chatui_tag}|g" "${action_root}/hf-spaces/chatui/Dockerfile" > "${out_dir}/Dockerfile"
+    : "${image_tag:?image_tag is required for component=chatui}"
+    sed "s|{{TAG}}|${image_tag}|g" "${action_root}/hf-spaces/chatui/Dockerfile" > "${out_dir}/Dockerfile"
     cp "${action_root}/hf-spaces/chatui/custom_startup.sh" "${out_dir}/custom_startup.sh"
     app_port=3000
     color_from=yellow
