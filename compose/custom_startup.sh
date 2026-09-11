@@ -11,29 +11,32 @@ else
     cat <<< "$DOTENV_LOCAL" > ${ENV_LOCAL_PATH}
 fi;
 
-# --- 2. Create MongoDB Data Directory ---
-echo "Ensuring MongoDB data directory exists and has correct permissions..."
-mkdir -p /data/db
-chown -R user:user /data/db
+# --- 2. Start MongoDB (only when built from the chabo-chatui-db image) ---
+# INCLUDE_DB is baked into the image itself (see ChaBo-ChatUI's Dockerfile) — "true" for
+# chabo-chatui-db (embedded Mongo), unset/"false" for chabo-chatui (expects MONGODB_URL
+# to point at an external Mongo instead, set via chatui.env.local).
+if [ "$INCLUDE_DB" = "true" ]; then
+    echo "Ensuring MongoDB data directory exists and has correct permissions..."
+    mkdir -p /data/db
+    chown -R user:user /data/db
+    echo "Starting local MongoDB instance..."
+    nohup mongod &
+    sleep 5
+fi
 
 # --- 3. Create Models Directory ---
 echo "Ensuring models directory exists and has correct permissions..."
 mkdir -p /data/models
 chown -R user:user /data/models
 
-# --- 4. Start MongoDB ---
-echo "Starting local MongoDB instance..."
-nohup mongod &
-sleep 5
-
-# --- 5. Handle PUBLIC_VERSION ---
+# --- 4. Handle PUBLIC_VERSION ---
 if [ -z "$PUBLIC_VERSION" ]; then
     export PUBLIC_VERSION="0.0.1"
 fi
 
-# --- 6. Disable LLM-based title generation ---
+# --- 5. Disable LLM-based title generation ---
 export LLM_SUMMARIZATION=false
 
-# --- 7. Start ChatUI Application ---
+# --- 6. Start ChatUI Application ---
 echo "Starting ChatUI application..."
 exec dotenv -e /app/.env -c -- node /app/build/index.js -- --host 0.0.0.0 --port 3000

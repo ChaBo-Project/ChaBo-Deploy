@@ -1,4 +1,4 @@
-FROM ghcr.io/chabo-project/hf-chat-ui:{{TAG}}
+FROM ghcr.io/chabo-project/chabo-chatui-db:{{TAG}}
 
 USER root
 COPY custom_startup.sh /usr/local/bin/custom_startup.sh

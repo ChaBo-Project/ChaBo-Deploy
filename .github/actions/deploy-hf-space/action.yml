@@ -9,7 +9,7 @@ inputs:
     description: 'org/space-name on huggingface.co'
     required: true
   image_tag:
-    description: 'Published image tag to deploy: chabo-rag-orchestrator tag (required for component=orchestrator) or hf-chat-ui tag (required for component=chatui). Unused for component=qdrant — its version is this repo''s own tag.'
+    description: 'Published image tag to deploy: chabo-rag-orchestrator tag (required for component=orchestrator) or chabo-chatui-db tag (required for component=chatui). Unused for component=qdrant — its version is this repo''s own tag.'
     required: false
     default: ''
   title:

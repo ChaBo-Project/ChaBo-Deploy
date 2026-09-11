@@ -121,7 +121,8 @@ services:
       context: .
       dockerfile: chatui.Dockerfile
       args:
-        CHATUI_TAG: ${CHATUI_TAG:-0.9.4-chabo}
+        CHATUI_IMAGE: ${CHATUI_IMAGE:-ghcr.io/chabo-project/chabo-chatui-db}
+        CHATUI_TAG: ${CHATUI_TAG:?CHATUI_TAG is required for the chatui profile}
     ports:
       - "3000:3000"
     # Non-HTTPS testing: set UI_ORIGIN in .env, then enable this:
