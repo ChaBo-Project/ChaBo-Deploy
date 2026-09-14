@@ -76,3 +76,26 @@ the namespace matching what you're actually deploying.
 - [`hf-spaces/README.md`](hf-spaces/README.md) — hf-spaces topology mechanism
 - [`compose/README.md`](compose/README.md) — docker-compose-vm topology mechanism
 - `GUIDELINES.md` (org `.github` repo) — binding conventions this repo follows
+
+## Security checks
+
+Pull requests targeting `main` and pushes to `main` run two checks:
+
+- **Secret files:** rejects tracked `.env` and `chatui.env.local`
+  files in any directory. Example and template filenames are allowed.
+- **Secret scan:** uses Gitleaks to scan Git history for recognizable
+  credentials. Detected secret values are hidden in scanner output.
+
+If a check fails, open the failed check's logs for details.
+
+For a tracked local configuration file, use
+`git rm --cached -- path/to/file` to remove it from Git tracking
+while keeping your local copy.
+
+If a real credential was committed, revoke or rotate it immediately.
+Removing it from the latest file does not remove it from Git history.
+History findings require separate remediation; do not disable the
+scanner simply to make the check pass.
+
+Required status checks must also be configured in GitHub's branch
+rules to block merging when these checks fail.
