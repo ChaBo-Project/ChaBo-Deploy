@@ -1,0 +1,109 @@
+name: Security checks
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  secret-files:
+    name: Secret files
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository
+        # actions/checkout v4.2.2, pinned to an exact commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Reject tracked secret files
+        shell: python
+        run: |
+          import subprocess
+          import sys
+          from pathlib import PurePosixPath
+
+          result = subprocess.run(
+              ["git", "ls-files", "-z"],
+              check=True,
+              stdout=subprocess.PIPE,
+          )
+
+          forbidden = {".env", "chatui.env.local"}
+          blocked = []
+
+          for raw_path in result.stdout.split(b"\0"):
+              if not raw_path:
+                  continue
+              path = raw_path.decode("utf-8", errors="replace")
+              if PurePosixPath(path).name in forbidden:
+                  blocked.append(path)
+
+          if blocked:
+              print("FAIL: Git tracks local secret files:")
+              for path in blocked:
+                  print(f"  {path!r}")
+              print("Remove these files from Git tracking.")
+              print("Keep example templates free of credentials.")
+              sys.exit(1)
+
+          print("PASS: No forbidden secret files are tracked.")
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository with history
+        # actions/checkout v4.2.2, pinned to an exact commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download and verify Gitleaks
+        shell: bash
+        env:
+          GITLEAKS_VERSION: "8.24.3"
+        run: |
+          set -euo pipefail
+
+          install_dir="$(mktemp -d "${RUNNER_TEMP}/gitleaks.XXXXXX")"
+          cd "$install_dir"
+
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          checksums="gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          release="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+
+          curl --fail --silent --show-error --location \
+            --retry 3 "$release/$archive" -o "$archive"
+          curl --fail --silent --show-error --location \
+            --retry 3 "$release/$checksums" -o "$checksums"
+
+          awk -v file="$archive" '$2 == file {print}' \
+            "$checksums" > selected-checksum.txt
+          test -s selected-checksum.txt
+          sha256sum --check selected-checksum.txt
+
+          tar -xzf "$archive" gitleaks
+          chmod +x gitleaks
+          echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Scan Git history for secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          gitleaks git \
+            --log-opts="HEAD" \
+            --redact=100 \
+            --no-banner \
+            --exit-code=1 \
+            .
