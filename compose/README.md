@@ -10,6 +10,11 @@ per-instance image build required.
 
 ## Usage
 
+Keep real API tokens and other credentials only in your local `.env` and
+`chatui.env.local` files. These files are ignored by Git and must not be
+committed. Keep `.env.example` and `chatui.env.local.template` free of
+real credentials.
+
 0. Obtain this content at a pinned version — this repo uses a `compose-vX.Y.Z` tag
    namespace independent of the `hf-spaces` topology's tags (see root `README.md`'s
    "Versioning"):

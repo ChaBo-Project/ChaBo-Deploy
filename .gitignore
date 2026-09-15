@@ -1,3 +1,7 @@
 __pycache__/
 *.pyc
 CLAUDE.md
+
+# Local configuration files that may contain secrets
+.env
+chatui.env.local
