@@ -16,7 +16,7 @@ inputs:
     description: 'HF Space README frontmatter title'
     required: true
   extra_content_path:
-    description: 'Path, relative to the CALLING repo''s checkout, to overlay into the render (e.g. orchestrator/instance_config)'
+    description: 'Path, relative to the CALLING repo''s checkout, to overlay into the render (a directory containing instance_config/ for component=orchestrator, or a PRIVACY.md for component=chatui)'
     required: false
     default: ''
   hf_token:

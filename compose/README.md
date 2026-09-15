@@ -23,7 +23,9 @@ per-instance image build required.
    `instance.yaml` are both fully documented inline: what's required vs. optional, and
    why). `prompt_overrides.md` is also included, though optional and inert by default.
 2. If using the `chatui` profile, copy `chatui.env.local.template` to `chatui.env.local`
-   and customize (model display name, prompt template, disclaimers).
+   and customize (model display name, prompt template, disclaimers). Also edit
+   `PRIVACY.md` before deploying if the default AI Act transparency placeholder needs
+   real content — it's baked into the chatui image at build time.
 3. Run:
    ```bash
    docker compose --env-file .env -f compose/docker-compose.yml up

@@ -33,7 +33,9 @@ concern, not a self-contained deployable unit on its own:
   a local MongoDB, writes `DOTENV_LOCAL`'s content to `.env.local` if set, then launches
   ChatUI on port 3000). `hf-spaces/chatui/env.local.template` is a reference only (see
   "Required Space secrets/variables" below) — `render.sh` deliberately excludes it from
-  what gets pushed to the Space.
+  what gets pushed to the Space. `hf-spaces/chatui/PRIVACY.md` is baked into the image
+  and *is* pushed — edit it (or overlay your own via `extra_content_path`) before deploying
+  if the default AI Act transparency placeholder needs real content.
 - **`hf-spaces/boilerplate/`** — `README.md.template` (HF Space frontmatter) and
   `.gitattributes` (LFS rules for `*.snapshot`/`*.parquet`), stamped onto every render
   regardless of component.
