@@ -1,4 +1,4 @@
-<!-- Synced verbatim from chabo (ChaBo-Orchestrator)'s own instance_config.example/ — the
+<!-- Based on chabo (ChaBo-Orchestrator)'s own instance_config.example/ — the
 source of truth for this file's contract. Re-sync when that upstream file changes;
 don't hand-patch individual fields here, it just re-drifts. -->
 
