@@ -51,9 +51,10 @@ concern, not a self-contained deployable unit on its own:
   `component: chatui` (`chabo-chatui-db` tag; no silent default, since a stale pin
   would deploy silently), unused for `component: qdrant`, whose version is this
   repo's own tag), `title` (Space README
-  frontmatter title), `extra_content_path` (path in the
-  *calling* repo to overlay, e.g. `orchestrator/instance_config` — only meaningful for
-  `component: orchestrator`), and `hf_token` (HF token with write access to `hf_space`).
+  frontmatter title), `extra_content_path` (folder path relative to the
+  *calling* repository checkout: for `component: orchestrator`, its contents become
+  `instance_config/`; for `component: chatui`, the folder must contain `PRIVACY.md`,
+  which replaces the default privacy file), and `hf_token` (HF token with write access to `hf_space`).
 
 ## Ingestion mechanism
 
