@@ -30,6 +30,8 @@ mkdir -p /data/models
 chown -R user:user /data/models
 
 # --- 4. Handle PUBLIC_VERSION ---
+# Normally already set to the deployed CHATUI_TAG via the Dockerfile's ENV (see
+# compose/chatui.Dockerfile) — this is just a fallback if that's somehow unset.
 if [ -z "$PUBLIC_VERSION" ]; then
     export PUBLIC_VERSION="0.0.1"
 fi

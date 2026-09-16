@@ -2,6 +2,9 @@ ARG CHATUI_IMAGE=ghcr.io/chabo-project/chabo-chatui-db
 ARG CHATUI_TAG
 FROM ${CHATUI_IMAGE}:${CHATUI_TAG}
 
+ARG CHATUI_TAG
+ENV PUBLIC_VERSION=${CHATUI_TAG}
+
 USER root
 COPY custom_startup.sh /usr/local/bin/custom_startup.sh
 RUN chmod +x /usr/local/bin/custom_startup.sh

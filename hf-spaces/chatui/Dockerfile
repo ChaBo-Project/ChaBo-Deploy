@@ -1,5 +1,7 @@
 FROM ghcr.io/chabo-project/chabo-chatui-db:{{TAG}}
 
+ENV PUBLIC_VERSION={{TAG}}
+
 USER root
 COPY custom_startup.sh /usr/local/bin/custom_startup.sh
 RUN chmod +x /usr/local/bin/custom_startup.sh

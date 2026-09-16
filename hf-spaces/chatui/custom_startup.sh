@@ -27,6 +27,8 @@ nohup mongod &
 sleep 5
 
 # --- 5. Handle PUBLIC_VERSION ---
+# Normally already set to the deployed CHATUI_TAG via the Dockerfile's ENV (see
+# hf-spaces/chatui/Dockerfile) — this is just a fallback if that's somehow unset.
 if [ -z "$PUBLIC_VERSION" ]; then
     export PUBLIC_VERSION="0.0.1"
 fi
