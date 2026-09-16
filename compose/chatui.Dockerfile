@@ -1,9 +1,14 @@
-ARG CHATUI_TAG=0.9.4-chabo
-FROM ghcr.io/chabo-project/hf-chat-ui:${CHATUI_TAG}
+ARG CHATUI_IMAGE=ghcr.io/chabo-project/chabo-chatui-db
+ARG CHATUI_TAG
+FROM ${CHATUI_IMAGE}:${CHATUI_TAG}
+
+ARG CHATUI_TAG
+ENV PUBLIC_VERSION=${CHATUI_TAG}
 
 USER root
 COPY custom_startup.sh /usr/local/bin/custom_startup.sh
 RUN chmod +x /usr/local/bin/custom_startup.sh
+COPY --chown=1000 PRIVACY.md /app/PRIVACY.md
 
 WORKDIR /app
 

@@ -29,11 +29,13 @@ concern, not a self-contained deployable unit on its own:
   runs `initialize_qdrant.py`, then launches `app.py`'s Gradio server in the foreground),
   `app.py` exposes a `query_points` Gradio API in front of the local Qdrant instance.
 - **`hf-spaces/chatui/`** — `Dockerfile` builds on the published
-  `ghcr.io/chabo-project/hf-chat-ui` image, `custom_startup.sh` is the entrypoint (starts
+  `ghcr.io/chabo-project/chabo-chatui-db` image, `custom_startup.sh` is the entrypoint (starts
   a local MongoDB, writes `DOTENV_LOCAL`'s content to `.env.local` if set, then launches
   ChatUI on port 3000). `hf-spaces/chatui/env.local.template` is a reference only (see
   "Required Space secrets/variables" below) — `render.sh` deliberately excludes it from
-  what gets pushed to the Space.
+  what gets pushed to the Space. `hf-spaces/chatui/PRIVACY.md` is baked into the image
+  and *is* pushed — edit it (or overlay your own via `extra_content_path`) before deploying
+  if the default AI Act transparency placeholder needs real content.
 - **`hf-spaces/boilerplate/`** — `README.md.template` (HF Space frontmatter) and
   `.gitattributes` (LFS rules for `*.snapshot`/`*.parquet`), stamped onto every render
   regardless of component.
@@ -44,11 +46,11 @@ concern, not a self-contained deployable unit on its own:
   loudly here instead of being silently overwritten.
 
   Action inputs: `component` (`orchestrator`/`qdrant`/`chatui`), `hf_space`
-  (`org/space-name`), `image_tag` (published image tag — required for
-  `component: orchestrator` (`chabo-rag-orchestrator` tag), optional for
-  `component: chatui` (`hf-chat-ui` tag, defaults to the pinned version — override to
-  pick up a new release without waiting on a `ChaBo-Deploy` release), unused for
-  `component: qdrant`, whose version is this repo's own tag), `title` (Space README
+  (`org/space-name`), `image_tag` (published image tag — required for both
+  `component: orchestrator` (`chabo-rag-orchestrator` tag) and
+  `component: chatui` (`chabo-chatui-db` tag; no silent default, since a stale pin
+  would deploy silently), unused for `component: qdrant`, whose version is this
+  repo's own tag), `title` (Space README
   frontmatter title), `extra_content_path` (path in the
   *calling* repo to overlay, e.g. `orchestrator/instance_config` — only meaningful for
   `component: orchestrator`), and `hf_token` (HF token with write access to `hf_space`).

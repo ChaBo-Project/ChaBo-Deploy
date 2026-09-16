@@ -9,14 +9,14 @@ inputs:
     description: 'org/space-name on huggingface.co'
     required: true
   image_tag:
-    description: 'Published image tag to deploy: chabo-rag-orchestrator tag (required for component=orchestrator) or hf-chat-ui tag (optional for component=chatui, defaults to the pinned version). Unused for component=qdrant — its version is this repo''s own tag.'
+    description: 'Published image tag to deploy: chabo-rag-orchestrator tag (required for component=orchestrator) or chabo-chatui-db tag (required for component=chatui). Unused for component=qdrant — its version is this repo''s own tag.'
     required: false
     default: ''
   title:
     description: 'HF Space README frontmatter title'
     required: true
   extra_content_path:
-    description: 'Path, relative to the CALLING repo''s checkout, to overlay into the render (e.g. orchestrator/instance_config)'
+    description: 'Path, relative to the CALLING repo''s checkout, to overlay into the render (a directory whose contents become instance_config/ for component=orchestrator, or a PRIVACY.md for component=chatui)'
     required: false
     default: ''
   hf_token:

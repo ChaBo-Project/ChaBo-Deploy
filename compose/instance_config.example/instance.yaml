@@ -1,6 +1,10 @@
-# Tier-2 safe content for this instance. All four top-level keys are independent and
-# optional — omit any you don't need. See chabo/README.md's "Instance Configuration"
-# section for the full contract and validation rules.
+# Synced verbatim from chabo (ChaBo-Orchestrator)'s own instance_config.example/ — the
+# source of truth for this file's contract. Re-sync when that upstream file changes;
+# don't hand-patch individual fields here, it just re-drifts.
+
+# Tier-2 safe content for the `<INSTANCE_NAME>` instance. All four top-level keys are
+# independent and optional — omit any you don't need. See chabo/README.md's
+# "Instance Configuration" section for the full contract and validation rules.
 
 # filters:
 #   # Required only if [metadata_filters] filterable_fields is set in

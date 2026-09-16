@@ -1,8 +1,11 @@
-FROM ghcr.io/chabo-project/hf-chat-ui:{{TAG}}
+FROM ghcr.io/chabo-project/chabo-chatui-db:{{TAG}}
+
+ENV PUBLIC_VERSION={{TAG}}
 
 USER root
 COPY custom_startup.sh /usr/local/bin/custom_startup.sh
 RUN chmod +x /usr/local/bin/custom_startup.sh
+COPY --chown=1000 PRIVACY.md /app/PRIVACY.md
 
 WORKDIR /app
 
