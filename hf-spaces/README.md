@@ -66,8 +66,10 @@ server comes up:
 2. Checks whether `COLLECTION_NAME` already exists. If it does, skips straight to serving
    — **the collection is treated as already-loaded, not re-synced.**
 3. If it doesn't exist: creates it (`EMBEDDING_DIMENSION`-sized vectors, cosine distance),
-   then pulls `EMBEDDING_DATASET` from Hugging Face via `datasets.load_dataset` and
-   `client.upsert()`s it into Qdrant in `BATCH_SIZE`-row batches.
+   creates a payload index on `metadata.<field>` for each `FILTERABLE_FIELDS` entry
+   (`str`/`list` → keyword, `int` → integer), then pulls `EMBEDDING_DATASET` from Hugging
+   Face via `datasets.load_dataset` and `client.upsert()`s it into Qdrant in
+   `BATCH_SIZE`-row batches.
 
 The dataset is expected to have `id`, a vector column (default name `vector`, overridable
 via `VECTOR_COLUMN_NAME`), and `payload` columns; `payload` is parsed with
@@ -94,7 +96,11 @@ not part of what `deploy-hf-space` pushes:
 `DATASET_READ_TOKEN` (HF token to read `EMBEDDING_DATASET`, only needed if that dataset
 is private), `EMBEDDING_DATASET`, `COLLECTION_NAME`, `EMBEDDING_DIMENSION` — all required;
 optionally `VECTOR_COLUMN_NAME` (default `vector`), `BATCH_SIZE` (default `200`), `TOP_K`
-(default `10`, only affects the Gradio UI's default value, not a hard limit on API calls).
+(default `10`, only affects the Gradio UI's default value, not a hard limit on API calls),
+`FILTERABLE_FIELDS` (same `field:type,...` value as the orchestrator's
+`[metadata_filters] filterable_fields`; indexes those fields so filtered search stays fast
+on large collections), `QDRANT_TIMEOUT` (seconds per search request; unset keeps
+qdrant-client's default).
 
 Also optional: `QDRANT__SERVICE__READ_ONLY_API_KEY` — a read-only key for `query_points`,
 separate from the admin key `initialize_qdrant.py` uses for its write. Worth setting since

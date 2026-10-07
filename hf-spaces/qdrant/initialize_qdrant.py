@@ -24,6 +24,8 @@ HF_DATASET_NAME = os.getenv("EMBEDDING_DATASET")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "default_collection")
 EMBEDDING_DIMENSION = int(os.getenv("EMBEDDING_DIMENSION", 1024))
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", 200))
+# Same "field:type,field:type" format as the orchestrator's [metadata_filters] filterable_fields
+FILTERABLE_FIELDS = os.getenv("FILTERABLE_FIELDS", "")
 # TOKENS AND SECRETS
 embedding_token = os.getenv("DATASET_READ_TOKEN")
 qdrant_token = os.getenv("QDRANT__SERVICE__API_KEY")
@@ -51,7 +53,7 @@ def create_collection_if_not_exists(client: QdrantClient):
 
     try:
         # Create the collection with the correct vector size
-        client.recreate_collection(
+        client.create_collection(
             collection_name=COLLECTION_NAME,
             vectors_config=models.VectorParams(
                 size=EMBEDDING_DIMENSION,
@@ -64,6 +66,34 @@ def create_collection_if_not_exists(client: QdrantClient):
     except Exception as e:
         logger.error(f"Failed to create collection: {e}")
         return False
+
+PAYLOAD_SCHEMA_BY_TYPE = {
+    "str": models.PayloadSchemaType.KEYWORD,
+    "list": models.PayloadSchemaType.KEYWORD,  # keyword index covers lists of strings
+    "int": models.PayloadSchemaType.INTEGER,
+}
+
+def create_payload_indexes(client: QdrantClient):
+    """Indexes each FILTERABLE_FIELDS entry under metadata.<field> so filtered search doesn't scan every point."""
+    for item in FILTERABLE_FIELDS.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        # A field without a type defaults to str, as in the orchestrator
+        field, _, field_type = item.partition(":")
+        field, field_type = field.strip(), (field_type.strip() or "str")
+
+        schema = PAYLOAD_SCHEMA_BY_TYPE.get(field_type)
+        if schema is None:
+            logger.warning(f"Skipping payload index for '{field}': unsupported type '{field_type}' (use str, int or list).")
+            continue
+
+        client.create_payload_index(
+            collection_name=COLLECTION_NAME,
+            field_name=f"metadata.{field}",
+            field_schema=schema,
+        )
+        logger.info(f"Payload index on 'metadata.{field}' ({field_type}) is ready.")
 
 def safe_parse_data(data: Any, expected_type: type, field_name: str, index: int) -> Any:
     """
@@ -191,6 +221,8 @@ def main_initialization():
 
     # If the collection was just created (or if it never existed), load the data
     if not collection_exists:
+        # Indexes go in before the upload, so they are built as points arrive
+        create_payload_indexes(client)
         # We no longer need to initialize an embedding model
         load_and_index_data(client)
     else:
