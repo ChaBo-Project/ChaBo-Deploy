@@ -149,6 +149,10 @@ must write points matching the shape `chabo`'s retriever actually reads
   filter-building code only ever queries `metadata.<field>` (a single dot). Nesting a
   filterable field any deeper (e.g. `metadata.custom.crop_type`) means it will never
   match a query filter, silently.
+- **Index each filterable field before upserting** — a payload index on
+  `metadata.<field>` (`str`/`list` → keyword, `int` → integer; the type must match the
+  stored values). Without it, filtered search on a large collection is slow and can
+  silently miss the best matches.
 
 ### Minimal ingestion example
 
@@ -166,9 +170,13 @@ def to_native(o):  # numpy scalars/arrays from pandas break Qdrant's serializer 
 
 client = QdrantClient(host="localhost", port=6333, api_key="<QDRANT_API_KEY>", https=False)
 COLLECTION, SIZE, BATCH = "test", 1024, 200
+# One entry per [metadata_filters] filterable_fields entry
+FILTERABLE = {"crop_type": models.PayloadSchemaType.KEYWORD, "title": models.PayloadSchemaType.KEYWORD}
 
 if not client.collection_exists(COLLECTION):
     client.create_collection(COLLECTION, vectors_config=models.VectorParams(size=SIZE, distance=models.Distance.COSINE))
+    for field, schema in FILTERABLE.items():
+        client.create_payload_index(COLLECTION, field_name=f"metadata.{field}", field_schema=schema)
 
 points = [
     models.PointStruct(id=int(r["id"]), vector=[float(x) for x in r["vector"]], payload=to_native(r["payload"]))

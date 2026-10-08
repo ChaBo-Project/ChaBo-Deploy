@@ -86,8 +86,8 @@ this on the read side.
 
 ## Required Space secrets/variables
 
-Set by hand on each Space itself (Settings → Variables and secrets) — never by CI, and
-not part of what `deploy-hf-space` pushes:
+Not part of what `deploy-hf-space` pushes. `instance-example`'s deploy workflow sets
+them; otherwise set them by hand on each Space (Settings → Variables and secrets):
 
 **orchestrator Space:** `HF_TOKEN`, `QDRANT_API_KEY`.
 
@@ -99,8 +99,9 @@ optionally `VECTOR_COLUMN_NAME` (default `vector`), `BATCH_SIZE` (default `200`)
 (default `10`, only affects the Gradio UI's default value, not a hard limit on API calls),
 `FILTERABLE_FIELDS` (same `field:type,...` value as the orchestrator's
 `[metadata_filters] filterable_fields`; indexes those fields so filtered search stays fast
-on large collections), `QDRANT_TIMEOUT` (seconds per search request; unset keeps
-qdrant-client's default).
+on large collections; the declared type must match the stored values — `int` only
+matches integers, `str`/`list` only strings), `QDRANT_TIMEOUT` (seconds per search
+request; unset keeps qdrant-client's default).
 
 Also optional: `QDRANT__SERVICE__READ_ONLY_API_KEY` — a read-only key for `query_points`,
 separate from the admin key `initialize_qdrant.py` uses for its write. Worth setting since
