@@ -25,10 +25,13 @@ DEFAULT_COLLECTION_NAME = os.getenv("COLLECTION_NAME")
 # "Qdrant API keys").
 QDRANT_API_KEY = os.getenv("QDRANT__SERVICE__READ_ONLY_API_KEY", os.getenv("QDRANT__SERVICE__API_KEY"))
 DEFAULT_TOP_K = int(os.getenv("TOP_K", 10))
+# Seconds per Qdrant request; unset keeps qdrant-client's own default.
+# Raise it if filtered searches on large collections time out.
+QDRANT_TIMEOUT = int(os.environ["QDRANT_TIMEOUT"]) if os.getenv("QDRANT_TIMEOUT") else None
 
 def get_qdrant_client() -> QdrantClient:
     """Initialize the Qdrant client for the Gradio app."""
-    return QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT, api_key=QDRANT_API_KEY, https=False)
+    return QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT, api_key=QDRANT_API_KEY, https=False, timeout=QDRANT_TIMEOUT)
 
 client = get_qdrant_client()
 

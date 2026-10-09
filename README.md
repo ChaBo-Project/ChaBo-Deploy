@@ -7,12 +7,11 @@ gets run somewhere*, consuming already-published orchestrator images.
 
 ## Deployment shapes
 
-Four shapes are recognized org-wide (see `GUIDELINES.md` A5). Here's what actually exists
+Three shapes are recognized org-wide (see `GUIDELINES.md` A5). Here's what actually exists
 in this repo for each, stated plainly rather than implied:
 
 | Shape | Status | Where |
 |---|---|---|
-| All-in-one container, demo-only | **Not built yet** | — (Qdrant/TEI/orchestrator as processes in one container is a different thing from `hf-spaces`, which is three independent Spaces) |
 | Single-container + remote inference, PoC | Built | [`hf-spaces/`](hf-spaces/README.md) — three independent single-service Spaces (orchestrator/qdrant/chatui), each pointed at remote inference endpoints. Deploy `component: orchestrator` alone (pointed at a remote/managed Qdrant) for a minimal PoC, or pair with qdrant and/or chatui for a fuller deployment — not limited to PoC scale, a legitimate option for small/mid-scale production too |
 | Compose stack, single VM | Built — **the reference for adopters** | [`compose/`](compose/README.md) |
 | Compose stack split across VMs (GPU component isolated) | **Not built yet** | — |
