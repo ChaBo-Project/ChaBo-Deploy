@@ -12,7 +12,13 @@ sleep 5
 # --- 2. Run Initialization Script ---
 # This script connects to the local Qdrant server and indexes data if the collection is missing.
 echo "Running data initialization script..."
-python3 /app/initialize_qdrant.py
+# On failure (e.g. bad dataset, bad SPARSE_MODEL, out of memory) stop here, so the
+# Space shows a runtime error instead of serving an empty collection.
+if ! python3 /app/initialize_qdrant.py; then
+    echo "Data initialization failed (see the errors above); not starting the Gradio API."
+    kill $QDRANT_PID
+    exit 1
+fi
 
 # --- 3. Start Gradio API Server ---
 # The Gradio app will connect to the local Qdrant instance and expose the API.

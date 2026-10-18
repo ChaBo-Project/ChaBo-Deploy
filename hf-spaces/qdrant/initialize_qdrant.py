@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import logging
 import uuid
@@ -84,6 +85,14 @@ def create_collection_if_not_exists(client: QdrantClient):
     # Check if collection is present
     collections = client.get_collections().collections
     if COLLECTION_NAME in [c.name for c in collections]:
+        # An empty collection means an earlier start died before indexing (e.g. out of
+        # memory); index into it instead of serving no data.
+        if not client.get_collection(COLLECTION_NAME).points_count:
+            logger.warning(
+                f"Collection '{COLLECTION_NAME}' exists but is empty (an earlier start was "
+                f"interrupted?). Indexing into it."
+            )
+            return False
         logger.info(f"Collection '{COLLECTION_NAME}' already exists. Skipping data loading.")
         if HYBRID:
             sparse = client.get_collection(COLLECTION_NAME).config.params.sparse_vectors or {}
@@ -242,9 +251,10 @@ def add_sparse_vectors(points: List[models.PointStruct], encoder) -> None:
         }
 
 
-def load_and_index_data(client: QdrantClient, sparse_encoder=None):
+def load_and_index_data(client: QdrantClient, sparse_encoder=None) -> bool:
     """Pulls pre-embedded data from HF and indexes it into Qdrant using client.upsert.
-    With a sparse encoder, also adds a BM25 vector per point (hybrid collection)."""
+    With a sparse encoder, also adds a BM25 vector per point (hybrid collection).
+    Returns False if indexing failed or no point was indexed."""
     logger.info(f"Starting data loading from Hugging Face dataset: {HF_DATASET_NAME}")
 
 
@@ -252,38 +262,48 @@ def load_and_index_data(client: QdrantClient, sparse_encoder=None):
         # Load a small slice of the dataset for demonstration/speed
         dataset = load_dataset(HF_DATASET_NAME, token = embedding_token, cache_dir="/tmp/datasets_cache")
         dataset = dataset['train']
-        points_to_upsert: List[models.PointStruct] = []
         vector_column_name = os.getenv("VECTOR_COLUMN_NAME", "vector")
-        logger.info(f"Loaded {len(dataset)} documents. Preparing points for indexing...")
+        logger.info(f"Loaded {len(dataset)} documents. Indexing in batches of {BATCH_SIZE}...")
         logger.info(f"Dataset id of type {type(dataset[0]['id'])}")
         logger.info(f"Dataset vector of type {type(dataset[0][vector_column_name])}")
         logger.info(f"Dataset payload of type {type(dataset[0]['payload'])}")
 
-        points_to_upsert = [
-            point
-            for i, item in enumerate(dataset)
-            if (point := process_data_item(i, item, vector_column_name, EMBEDDING_DIMENSION)) is not None
-        ]
-
-        print(f"Successfully prepared {len(points_to_upsert)} points for upsert.")
-
-
-        for i in range(0, len(points_to_upsert), BATCH_SIZE):
-            batch = points_to_upsert[i:i+BATCH_SIZE]
+        def upsert_batch(batch: List[models.PointStruct]) -> None:
             if sparse_encoder is not None:
                 add_sparse_vectors(batch, sparse_encoder)
-            client.upsert(
-                collection_name=COLLECTION_NAME,
-                points=batch
-            )
-        logger.info("Data Upsert and indexing complete.")
+            client.upsert(collection_name=COLLECTION_NAME, points=batch)
+
+        # Build and upsert one batch at a time: holding every point in memory first
+        # needs ~33 KB per 1024-dim vector as Python floats (~17 GB for 500k points).
+        batch: List[models.PointStruct] = []
+        upserted = 0
+        for i, item in enumerate(dataset):
+            point = process_data_item(i, item, vector_column_name, EMBEDDING_DIMENSION)
+            if point is not None:
+                batch.append(point)
+            if len(batch) >= BATCH_SIZE:
+                upsert_batch(batch)
+                upserted += len(batch)
+                batch = []
+                if upserted % (BATCH_SIZE * 100) == 0:
+                    logger.info(f"Upserted {upserted}/{len(dataset)} points...")
+        if batch:
+            upsert_batch(batch)
+            upserted += len(batch)
+
+        if not upserted:
+            logger.error("Data indexing failed: no valid points in the dataset (see SKIPPING lines above).")
+            return False
+        logger.info(f"Data Upsert and indexing complete: {upserted} points.")
+        return True
 
     except Exception as e:
         logger.error(f"Data indexing failed. Check dataset structure or network access. Error: {e}")
+        return False
 
 
-def main_initialization():
-    """Main execution block."""
+def main_initialization() -> bool:
+    """Main execution block. Returns False if the collection could not be made ready."""
     max_retries = 10
 
     # Wait for the local Qdrant server (started by start.sh) to become ready
@@ -299,7 +319,7 @@ def main_initialization():
             time.sleep(5)
     else:
         logger.error("Qdrant server failed to start within the maximum retry limit. Exiting initialization.")
-        return
+        return False
 
     # Load the sparse encoder before creating anything, so a bad SPARSE_MODEL /
     # SPARSE_LANGUAGE leaves no half-built hybrid collection behind.
@@ -313,7 +333,7 @@ def main_initialization():
                 f"SPARSE_LANGUAGE='{SPARSE_LANGUAGE}': {e}. Fix or unset SPARSE_MODEL. "
                 f"Skipping collection setup."
             )
-            return
+            return False
 
     # Check if the collection exists (meaning data was previously indexed)
     collection_exists = create_collection_if_not_exists(client)
@@ -323,10 +343,11 @@ def main_initialization():
         # Indexes go in before the upload, so they are built as points arrive
         create_payload_indexes(client)
         # Dense vectors come pre-computed in the dataset; BM25 is computed here if hybrid
-        load_and_index_data(client, sparse_encoder)
-    else:
-        logger.info("Collection already populated, skipping data indexing.")
+        return load_and_index_data(client, sparse_encoder)
+    logger.info("Collection already populated, skipping data indexing.")
+    return True
 
 
 if __name__ == "__main__":
-    main_initialization()
+    # Non-zero exit makes start.sh stop instead of serving an empty collection
+    sys.exit(0 if main_initialization() else 1)
