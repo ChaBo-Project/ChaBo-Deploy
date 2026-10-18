@@ -16,7 +16,7 @@ inputs:
     description: 'HF Space README frontmatter title'
     required: true
   extra_content_path:
-    description: 'Folder path relative to the calling repository checkout. For orchestrator, its contents become instance_config/. For chatui, the folder must contain PRIVACY.md, which replaces the default privacy file.'
+    description: 'Folder path relative to the calling repository checkout. For orchestrator, its contents become instance_config/. For chatui, the folder must contain PRIVACY.md, which replaces the default privacy file; an optional static/<name>/ folder adds a ChatUI asset set selected with PUBLIC_APP_ASSETS=<name>.'
     required: false
     default: ''
   hf_token:

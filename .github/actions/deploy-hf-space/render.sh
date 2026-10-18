@@ -39,8 +39,14 @@ case "$component" in
     sed "s|{{TAG}}|${image_tag}|g" "${action_root}/hf-spaces/chatui/Dockerfile" > "${out_dir}/Dockerfile"
     cp "${action_root}/hf-spaces/chatui/custom_startup.sh" "${out_dir}/custom_startup.sh"
     cp "${action_root}/hf-spaces/chatui/PRIVACY.md" "${out_dir}/PRIVACY.md"
+    # static/ must always exist (the Dockerfile COPYs it); .gitkeep keeps it in the Space's git.
+    mkdir -p "${out_dir}/static"
+    touch "${out_dir}/static/.gitkeep"
     if [ -n "$extra_content_path" ]; then
       cp "${GITHUB_WORKSPACE}/${extra_content_path}/PRIVACY.md" "${out_dir}/PRIVACY.md"
+      if [ -d "${GITHUB_WORKSPACE}/${extra_content_path}/static" ]; then
+        cp -r "${GITHUB_WORKSPACE}/${extra_content_path}/static/." "${out_dir}/static/"
+      fi
     fi
     app_port=3000
     color_from=yellow

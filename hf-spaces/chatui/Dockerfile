@@ -6,6 +6,8 @@ USER root
 COPY custom_startup.sh /usr/local/bin/custom_startup.sh
 RUN chmod +x /usr/local/bin/custom_startup.sh
 COPY --chown=1000 PRIVACY.md /app/PRIVACY.md
+# Instance asset folders (static/<name>/, selected via PUBLIC_APP_ASSETS) next to the baked-in ones.
+COPY --chown=1000 static/ /app/build/client/
 
 WORKDIR /app
 

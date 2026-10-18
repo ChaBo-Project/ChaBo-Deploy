@@ -31,6 +31,11 @@ real credentials.
    and customize (model display name, prompt template, disclaimers). Also edit
    `PRIVACY.md` before deploying if the default AI Act transparency placeholder needs
    real content — it's baked into the chatui image at build time.
+   For a custom logo, put your asset set (`logo.svg`, `favicon.ico`, `icon.svg`,
+   `apple-touch-icon.png`, `icon-512x512.png`; ChaBo-ChatUI's `static/chabo-official/`
+   is a starting point) in a folder, mount it in the `chatui` service's `volumes`
+   (`- ./static/<name>:/app/build/client/<name>:ro`), set `PUBLIC_APP_ASSETS=<name>` in
+   `chatui.env.local`, and recreate the container.
 3. Run:
    ```bash
    docker compose --env-file .env -f compose/docker-compose.yml up

@@ -54,7 +54,20 @@ concern, not a self-contained deployable unit on its own:
   frontmatter title), `extra_content_path` (folder path relative to the
   *calling* repository checkout: for `component: orchestrator`, its contents become
   `instance_config/`; for `component: chatui`, the folder must contain `PRIVACY.md`,
-  which replaces the default privacy file), and `hf_token` (HF token with write access to `hf_space`).
+  which replaces the default privacy file, and may contain `static/<name>/` — see
+  "Custom ChatUI logo" below), and `hf_token` (HF token with write access to `hf_space`).
+
+## Custom ChatUI logo
+
+ChatUI loads its logo and icons from `/app/build/client/$PUBLIC_APP_ASSETS/`. The image
+ships `chabo-official`, `chatui` and `huggingchat`. For your own set, put a
+`static/<name>/` folder in the chatui `extra_content_path` folder and set
+`PUBLIC_APP_ASSETS=<name>` in `DOTENV_LOCAL`. `render.sh` pushes it as `static/`, and the
+Space Dockerfile copies it next to the built-in sets (same name = override). Files read:
+`logo.svg`, `favicon.ico`, `icon.svg`, `apple-touch-icon.png`, `icon-512x512.png` — copy
+ChaBo-ChatUI's `static/chabo-official/` as a starting point. `*.png`/`*.ico` go through
+LFS (boilerplate `.gitattributes`). An unknown name doesn't fail: the page loads without
+a logo, so check that `/<name>/logo.svg` returns `content-type: image/svg+xml`.
 
 ## Ingestion mechanism
 
