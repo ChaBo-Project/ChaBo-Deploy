@@ -13,6 +13,8 @@ trap 'rm -rf "$work"' EXIT
 
 echo "==> Pushing to https://huggingface.co/spaces/${hf_space}"
 git clone "https://user:${HF_TOKEN}@huggingface.co/spaces/${hf_space}" "${work}/repo"
+# HF rejects binary files outside LFS; .gitattributes routes them, this makes git apply it.
+git -C "${work}/repo" lfs install --local
 find "${work}/repo" -mindepth 1 -maxdepth 1 -not -name '.git' -exec rm -rf {} +
 cp -r "${render_dir}"/. "${work}/repo"/
 
