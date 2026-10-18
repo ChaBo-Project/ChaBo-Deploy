@@ -60,6 +60,51 @@ def _build_qdrant_filter(filters: Dict[str, Any]) -> Optional[rest.Filter]:
 
     return rest.Filter(must=must_conditions)
 
+# Dense vector name used when the caller sends none; hybrid collections name it "dense".
+DEFAULT_DENSE_VECTOR_NAME = "dense"
+DEFAULT_SPARSE_VECTOR_NAME = "sparse"
+_dense_name_cache: Dict[str, Optional[str]] = {}
+
+
+def _default_dense_vector_name(collection_name: str) -> Optional[str]:
+    """
+    The dense vector to search when the caller passes no vector_name.
+
+    Unnamed-vector collections need none (None). Named-vector collections (hybrid) need
+    one, or Qdrant answers 400 "Not existing vector name" — so callers that predate
+    hybrid (which never send vector_name) keep working against a hybrid collection.
+    """
+    if collection_name in _dense_name_cache:
+        return _dense_name_cache[collection_name]
+    vectors = client.get_collection(collection_name).config.params.vectors
+    name = None
+    if isinstance(vectors, dict) and vectors:
+        name = DEFAULT_DENSE_VECTOR_NAME if DEFAULT_DENSE_VECTOR_NAME in vectors else (
+            next(iter(vectors)) if len(vectors) == 1 else None)
+    _dense_name_cache[collection_name] = name
+    return name
+
+
+def _parse_sparse_vector(sparse_vector_json: str) -> rest.SparseVector:
+    """Parse {"indices": [...], "values": [...]} into a Qdrant SparseVector."""
+    data = json.loads(sparse_vector_json)
+    if not isinstance(data, dict):
+        raise ValueError("sparse vector must be a JSON object with 'indices' and 'values'.")
+    indices, values = data.get("indices"), data.get("values")
+    if not isinstance(indices, list) or not isinstance(values, list) or len(indices) != len(values):
+        raise ValueError("sparse vector needs 'indices' and 'values' lists of equal length.")
+    return rest.SparseVector(indices=[int(i) for i in indices], values=[float(v) for v in values])
+
+
+def _jsonable_vector(vector: Any) -> Any:
+    """Stored vectors as JSON: sparse vectors become {indices, values}."""
+    if isinstance(vector, dict):
+        return {name: _jsonable_vector(v) for name, v in vector.items()}
+    if isinstance(vector, rest.SparseVector):
+        return {"indices": vector.indices, "values": vector.values}
+    return vector
+
+
 # --- Core API Function ---
 def query_points(
     query_vector_json: str,
@@ -68,16 +113,30 @@ def query_points(
     query_filter: Optional[str] = None,
     vector_name: Optional[str] = None,
     with_vectors: bool = False,
+    sparse_vector_json: Optional[str] = None,
+    sparse_vector_name: Optional[str] = None,
+    prefetch_top_k: Optional[float] = None,
+    dense_weight: Optional[float] = None,
+    sparse_weight: Optional[float] = None,
+    rrf_k: Optional[float] = None,
 ) -> str:
     """
-    Performs a vector search in Qdrant.
+    Performs a vector search in Qdrant: dense-only, or hybrid (dense + sparse fused with
+    weighted RRF) when sparse_vector_json is given.
     Args:
         query_vector_json (str): The query vector as a JSON string.
         collection_name (str): The name of the collection to search.
         top_k (int): The number of results to return.
         query_filter (str, optional): JSON string for the Qdrant filter object.
-        vector_name (str, optional): Name of the vector field to use ('using' parameter).
+        vector_name (str, optional): Dense vector name ('using'). Default: none for an
+            unnamed-vector collection, "dense" for a hybrid one.
         with_vectors (bool): Whether to return the stored vectors.
+        sparse_vector_json (str, optional): {"indices": [...], "values": [...]}; turns on
+            hybrid search. All arguments below apply only to hybrid search.
+        sparse_vector_name (str, optional): Sparse vector name (default "sparse").
+        prefetch_top_k (int, optional): Candidates per branch (default top_k, min top_k).
+        dense_weight / sparse_weight (float, optional): RRF weights (default 0.5 / 0.5).
+        rrf_k (int, optional): RRF smoothing constant (default 60).
     Returns:
         A JSON string of the search results or an error message.
     """
@@ -105,23 +164,52 @@ def query_points(
         except Exception as e:
             return json.dumps({"error": "Optional Parameters Error", "message": f"Could not process query filter: {e}"})
 
+    sparse_vector = None
+    if sparse_vector_json and sparse_vector_json.strip():
+        try:
+            sparse_vector = _parse_sparse_vector(sparse_vector_json)
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            return json.dumps({"error": "Invalid Sparse Vector", "message": str(e)})
+
     # 3. Qdrant Search Arguments
+    top_k = int(top_k)
     search_args = {
         "collection_name": collection_name,
-        "query": query_vector,
         "limit": top_k,
         "with_payload": True,
         "with_vectors": with_vectors,
     }
 
-    if qdrant_filter:
-        search_args["query_filter"] = qdrant_filter
-
-    if vector_name:
-        search_args["using"] = vector_name
-
     # 4. Qdrant Search Execution
     try:
+        dense_name = vector_name or _default_dense_vector_name(collection_name)
+
+        if sparse_vector is None:
+            # Dense-only: the original query shape
+            search_args["query"] = query_vector
+            if qdrant_filter:
+                search_args["query_filter"] = qdrant_filter
+            if dense_name:
+                search_args["using"] = dense_name
+        else:
+            # Hybrid: both branches as prefetches (filter on each), fused by weighted RRF.
+            # Same query as the orchestrator's native mode; needs Qdrant >= 1.17.
+            branch_limit = max(int(prefetch_top_k or top_k), top_k)
+            search_args["prefetch"] = [
+                rest.Prefetch(query=query_vector, using=dense_name,
+                              filter=qdrant_filter, limit=branch_limit),
+                rest.Prefetch(query=sparse_vector,
+                              using=sparse_vector_name or DEFAULT_SPARSE_VECTOR_NAME,
+                              filter=qdrant_filter, limit=branch_limit),
+            ]
+            weights = [
+                0.5 if dense_weight is None else float(dense_weight),
+                0.5 if sparse_weight is None else float(sparse_weight),
+            ]
+            search_args["query"] = rest.RrfQuery(
+                rrf=rest.Rrf(k=int(rrf_k or 60), weights=weights)
+            )
+
         search_result = client.query_points(**search_args)
 
         results = []
@@ -134,7 +222,7 @@ def query_points(
                 "score": hit.score
             }
             if with_vectors and hit.vector:
-                result_dict["vector"] = hit.vector
+                result_dict["vector"] = _jsonable_vector(hit.vector)
 
             results.append(result_dict)
 
@@ -145,7 +233,37 @@ def query_points(
         logger.error(f"Qdrant search failed: {e}", exc_info=True)
         return json.dumps({"error": "Qdrant Error", "message": f"Search failed in {collection_name}. Detail: {str(e)}"})
 
+def collection_info(collection_name: str) -> str:
+    """
+    Describe a collection so clients can adapt: dense/sparse vector names and the
+    retrieval recipe that initialize_qdrant.py stores in the collection metadata.
+    """
+    try:
+        info = client.get_collection(collection_name)
+        params = info.config.params
+        vectors = params.vectors
+        return json.dumps({
+            "collection_name": collection_name,
+            "points_count": info.points_count,
+            # null = one unnamed dense vector (the pre-hybrid layout)
+            "dense_vectors": (
+                {name: {"size": v.size, "distance": str(v.distance.value)} for name, v in vectors.items()}
+                if isinstance(vectors, dict) else None
+            ),
+            "dense_vector_name": _default_dense_vector_name(collection_name),
+            "sparse_vectors": {
+                name: {"modifier": (v.modifier.value if v.modifier else None)}
+                for name, v in (params.sparse_vectors or {}).items()
+            },
+            "metadata": getattr(info.config, "metadata", None) or {},
+        })
+    except Exception as e:
+        logger.error(f"collection_info failed: {e}", exc_info=True)
+        return json.dumps({"error": "Qdrant Error", "message": f"Cannot read collection {collection_name}. Detail: {str(e)}"})
+
+
 # --- Gradio Interface Setup ---
+# New inputs go at the end with defaults, so existing callers are unaffected.
 iface = gr.Interface(
     fn=query_points,
     inputs=[
@@ -155,6 +273,12 @@ iface = gr.Interface(
         gr.Textbox(label="4. Query Filter (JSON, optional)", placeholder='{"key":"value", "key 2":"[value1, value2]"}', lines=2),
         gr.Textbox(label="5. Vector Name (optional)", placeholder="leave blank for default"),
         gr.Checkbox(label="6. Return Vectors", value=False),
+        gr.Textbox(label="7. Sparse Vector (JSON, optional: turns on hybrid)", placeholder='{"indices": [1, 5], "values": [0.4, 0.9]}', lines=2),
+        gr.Textbox(label="8. Sparse Vector Name (optional)", placeholder="sparse"),
+        gr.Number(label="9. Prefetch Top K per branch (hybrid)", value=None, precision=0),
+        gr.Number(label="10. Dense Weight (hybrid)", value=None),
+        gr.Number(label="11. Sparse Weight (hybrid)", value=None),
+        gr.Number(label="12. RRF k (hybrid)", value=None, precision=0),
     ],
     outputs=gr.Json(label="API Response"),
     title="Private Qdrant Retrieval API (Powered by Gradio)",
@@ -162,7 +286,18 @@ iface = gr.Interface(
     description="Vector search endpoint. All optional parameters are now named arguments in both the UI and external API calls."
 )
 
+info_iface = gr.Interface(
+    fn=collection_info,
+    inputs=[gr.Textbox(label="Collection Name", value=DEFAULT_COLLECTION_NAME)],
+    outputs=gr.Json(label="Collection Info"),
+    title="Collection Info",
+    api_name="collection_info",
+    description="Vector names and retrieval recipe of a collection.",
+)
+
+app = gr.TabbedInterface([iface, info_iface], ["Query Points", "Collection Info"])
+
 # Launch the Gradio application
 if __name__ == "__main__":
     logger.info("Gradio application starting...")
-    iface.launch(server_name="0.0.0.0", server_port=7860)
+    app.launch(server_name="0.0.0.0", server_port=7860)
