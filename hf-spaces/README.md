@@ -114,7 +114,13 @@ Unset, the collection is built exactly as before (one unnamed dense vector). The
 applies when the collection is created: an existing dense collection is never changed
 (a warning says so). Storage is ephemeral, so a restart rebuilds it; on persistent storage
 use a new `COLLECTION_NAME`. An invalid model or language is logged and no collection is
-created. The `Qdrant/bm25` assets are baked into the image; other models download at boot.
+created. The `Qdrant/bm25` assets (stopword lists for all 18 languages, ~128 KB) are baked
+into the image.
+
+Only `Qdrant/bm25` is tested. Other fastembed sparse models are passed through but not
+supported: the sparse vector is always created with `modifier=IDF`, which suits BM25 but
+not neural sparse models such as SPLADE (their weights already carry term importance), and
+those models (hundreds of MB) would download on every boot.
 
 Turning on hybrid in the orchestrator also needs `[retrieval] hybrid_enabled = true`
 (orchestrator 0.9.3 or later for `[qdrant] mode = gradio`). Orchestrators that predate

@@ -196,7 +196,9 @@ for i in range(0, len(points), BATCH):
 For `[retrieval] hybrid_enabled = true`: a named `dense` vector plus a BM25 `sparse`
 vector (`modifier=IDF`) built from each payload's `text`, and the recipe stored in the
 collection metadata, where the orchestrator reads its query-side BM25 settings. Same
-parquet input as above; needs `pip install fastembed==0.8.0`. Tested against Qdrant 1.17.1:
+parquet input as above; needs `pip install fastembed==0.8.0`. Tested against Qdrant 1.17.1
+with `Qdrant/bm25` (the only sparse model tested; `modifier=IDF` suits BM25, not neural
+sparse models such as SPLADE):
 
 ```python
 import numpy as np, pandas as pd
