@@ -26,6 +26,18 @@ EMBEDDING_DIMENSION = int(os.getenv("EMBEDDING_DIMENSION", 1024))
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", 200))
 # Same "field:type,field:type" format as the orchestrator's [metadata_filters] filterable_fields
 FILTERABLE_FIELDS = os.getenv("FILTERABLE_FIELDS", "")
+# Optional hybrid retrieval: a fastembed sparse model id (e.g. Qdrant/bm25). Unset keeps
+# today's collection: one unnamed dense vector. Set, the collection gets a named "dense"
+# vector plus a BM25 "sparse" vector built from each payload's "text".
+SPARSE_MODEL = os.getenv("SPARSE_MODEL", "").strip()
+# Snowball stemmer/stopword language for SPARSE_MODEL (fastembed supports 18 languages).
+SPARSE_LANGUAGE = os.getenv("SPARSE_LANGUAGE", "").strip() or "english"
+HYBRID = bool(SPARSE_MODEL)
+# Fixed vector names, read by the orchestrator from the collection metadata below
+DENSE_VECTOR_NAME = "dense"
+SPARSE_VECTOR_NAME = "sparse"
+# Payload field the BM25 vectors are built from (the field the orchestrator returns as text)
+SPARSE_TEXT_FIELD = "text"
 # TOKENS AND SECRETS
 embedding_token = os.getenv("DATASET_READ_TOKEN")
 qdrant_token = os.getenv("QDRANT__SERVICE__API_KEY")
@@ -40,6 +52,32 @@ def get_qdrant_client_raw() -> QdrantClient:
     client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT, api_key = qdrant_token, https =False)
     return client
 
+def load_sparse_encoder():
+    """Load the fastembed sparse encoder for SPARSE_MODEL; raises if it can't be loaded."""
+    from fastembed import SparseTextEmbedding
+    logger.info(f"Loading sparse encoder '{SPARSE_MODEL}' (language={SPARSE_LANGUAGE})...")
+    return SparseTextEmbedding(model_name=SPARSE_MODEL, language=SPARSE_LANGUAGE)
+
+
+def retrieval_recipe() -> Dict[str, Any]:
+    """
+    Collection metadata describing how the vectors were built. The orchestrator reads it
+    at startup, so its query-side BM25 always matches the documents' encoding.
+    """
+    import fastembed
+    return {"chabo_retrieval": {
+        "version": 1,
+        "dense": {"vector": DENSE_VECTOR_NAME, "size": EMBEDDING_DIMENSION},
+        "sparse": {
+            "vector": SPARSE_VECTOR_NAME,
+            "model": SPARSE_MODEL,
+            "language": SPARSE_LANGUAGE,
+            "fastembed": fastembed.__version__,
+            "text_field": SPARSE_TEXT_FIELD,
+        },
+    }}
+
+
 def create_collection_if_not_exists(client: QdrantClient):
     """Checks if the collection exists and creates it if it doesn't."""
 
@@ -47,11 +85,41 @@ def create_collection_if_not_exists(client: QdrantClient):
     collections = client.get_collections().collections
     if COLLECTION_NAME in [c.name for c in collections]:
         logger.info(f"Collection '{COLLECTION_NAME}' already exists. Skipping data loading.")
+        if HYBRID:
+            sparse = client.get_collection(COLLECTION_NAME).config.params.sparse_vectors or {}
+            if SPARSE_VECTOR_NAME not in sparse:
+                logger.warning(
+                    f"SPARSE_MODEL is set but existing collection '{COLLECTION_NAME}' has no "
+                    f"'{SPARSE_VECTOR_NAME}' vector; it stays dense-only. Use a new "
+                    f"COLLECTION_NAME (or delete the collection) to rebuild it as hybrid."
+                )
         return True # Collection found
 
     logger.info(f"Collection '{COLLECTION_NAME}' not found. Creating collection...")
 
     try:
+        if HYBRID:
+            # Named dense + BM25 sparse vector; IDF is maintained by Qdrant itself
+            client.create_collection(
+                collection_name=COLLECTION_NAME,
+                vectors_config={
+                    DENSE_VECTOR_NAME: models.VectorParams(
+                        size=EMBEDDING_DIMENSION,
+                        distance=models.Distance.COSINE
+                    )
+                },
+                sparse_vectors_config={
+                    SPARSE_VECTOR_NAME: models.SparseVectorParams(modifier=models.Modifier.IDF)
+                },
+                metadata=retrieval_recipe(),
+            )
+            logger.info(
+                f"Collection '{COLLECTION_NAME}' created for hybrid retrieval: "
+                f"dense='{DENSE_VECTOR_NAME}' + sparse='{SPARSE_VECTOR_NAME}' "
+                f"({SPARSE_MODEL}, {SPARSE_LANGUAGE})."
+            )
+            return False
+
         # Create the collection with the correct vector size
         client.create_collection(
             collection_name=COLLECTION_NAME,
@@ -161,8 +229,22 @@ def process_data_item(index: int, item: dict, vector_column_name: str, vector_si
         print(f"SKIPPING item at index {index} due to validation/parsing error: {e}")
         return None
 
-def load_and_index_data(client: QdrantClient):
-    """Pulls pre-embedded data from HF and indexes it into Qdrant using client.upsert."""
+def add_sparse_vectors(points: List[models.PointStruct], encoder) -> None:
+    """Turn each point's dense vector into {dense, sparse}, BM25-encoding its payload text."""
+    texts = [str((p.payload or {}).get(SPARSE_TEXT_FIELD) or "") for p in points]
+    for point, embedding in zip(points, encoder.embed(texts)):
+        point.vector = {
+            DENSE_VECTOR_NAME: point.vector,
+            SPARSE_VECTOR_NAME: models.SparseVector(
+                indices=[int(i) for i in embedding.indices],
+                values=[float(v) for v in embedding.values],
+            ),
+        }
+
+
+def load_and_index_data(client: QdrantClient, sparse_encoder=None):
+    """Pulls pre-embedded data from HF and indexes it into Qdrant using client.upsert.
+    With a sparse encoder, also adds a BM25 vector per point (hybrid collection)."""
     logger.info(f"Starting data loading from Hugging Face dataset: {HF_DATASET_NAME}")
 
 
@@ -187,9 +269,12 @@ def load_and_index_data(client: QdrantClient):
 
 
         for i in range(0, len(points_to_upsert), BATCH_SIZE):
+            batch = points_to_upsert[i:i+BATCH_SIZE]
+            if sparse_encoder is not None:
+                add_sparse_vectors(batch, sparse_encoder)
             client.upsert(
                 collection_name=COLLECTION_NAME,
-                points=points_to_upsert[i:i+BATCH_SIZE]
+                points=batch
             )
         logger.info("Data Upsert and indexing complete.")
 
@@ -216,6 +301,20 @@ def main_initialization():
         logger.error("Qdrant server failed to start within the maximum retry limit. Exiting initialization.")
         return
 
+    # Load the sparse encoder before creating anything, so a bad SPARSE_MODEL /
+    # SPARSE_LANGUAGE leaves no half-built hybrid collection behind.
+    sparse_encoder = None
+    if HYBRID:
+        try:
+            sparse_encoder = load_sparse_encoder()
+        except Exception as e:
+            logger.error(
+                f"Cannot load sparse encoder SPARSE_MODEL='{SPARSE_MODEL}' "
+                f"SPARSE_LANGUAGE='{SPARSE_LANGUAGE}': {e}. Fix or unset SPARSE_MODEL. "
+                f"Skipping collection setup."
+            )
+            return
+
     # Check if the collection exists (meaning data was previously indexed)
     collection_exists = create_collection_if_not_exists(client)
 
@@ -223,8 +322,8 @@ def main_initialization():
     if not collection_exists:
         # Indexes go in before the upload, so they are built as points arrive
         create_payload_indexes(client)
-        # We no longer need to initialize an embedding model
-        load_and_index_data(client)
+        # Dense vectors come pre-computed in the dataset; BM25 is computed here if hybrid
+        load_and_index_data(client, sparse_encoder)
     else:
         logger.info("Collection already populated, skipping data indexing.")
 
