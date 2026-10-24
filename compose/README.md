@@ -190,3 +190,60 @@ points = [
 for i in range(0, len(points), BATCH):
     client.upsert(collection_name=COLLECTION, points=points[i : i + BATCH])
 ```
+
+### Hybrid ingestion example (dense + BM25)
+
+For `[retrieval] hybrid_enabled = true`: a named `dense` vector plus a BM25 `sparse`
+vector (`modifier=IDF`) built from each payload's `text`, and the recipe stored in the
+collection metadata, where the orchestrator reads its query-side BM25 settings. Same
+parquet input as above; needs `pip install fastembed==0.8.0`. Tested against Qdrant 1.17.1
+with `Qdrant/bm25` (the only sparse model tested; `modifier=IDF` suits BM25, not neural
+sparse models such as SPLADE):
+
+```python
+import numpy as np, pandas as pd
+import fastembed
+from fastembed import SparseTextEmbedding
+from qdrant_client import QdrantClient, models
+
+def to_native(o):  # numpy scalars/arrays from pandas break Qdrant's serializer otherwise
+    if isinstance(o, dict): return {k: to_native(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple, np.ndarray)): return [to_native(v) for v in o]
+    return o.item() if isinstance(o, np.generic) else o
+
+client = QdrantClient(host="localhost", port=6333, api_key="<QDRANT_API_KEY>", https=False)
+COLLECTION, SIZE, BATCH = "test", 1024, 200
+FILTERABLE = {"crop_type": models.PayloadSchemaType.KEYWORD, "title": models.PayloadSchemaType.KEYWORD}
+SPARSE_MODEL, SPARSE_LANGUAGE = "Qdrant/bm25", "english"
+
+if not client.collection_exists(COLLECTION):
+    client.create_collection(
+        COLLECTION,
+        vectors_config={"dense": models.VectorParams(size=SIZE, distance=models.Distance.COSINE)},
+        sparse_vectors_config={"sparse": models.SparseVectorParams(modifier=models.Modifier.IDF)},
+        metadata={"chabo_retrieval": {"version": 1,
+            "dense": {"vector": "dense", "size": SIZE},
+            "sparse": {"vector": "sparse", "model": SPARSE_MODEL, "language": SPARSE_LANGUAGE,
+                       "fastembed": fastembed.__version__, "text_field": "text"}}},
+    )
+    for field, schema in FILTERABLE.items():
+        client.create_payload_index(COLLECTION, field_name=f"metadata.{field}", field_schema=schema)
+
+df = pd.read_parquet("data.parquet")
+encoder = SparseTextEmbedding(SPARSE_MODEL, language=SPARSE_LANGUAGE)
+sparse = encoder.embed([p.get("text", "") for p in df["payload"]])
+points = [
+    models.PointStruct(
+        id=int(r["id"]),
+        vector={"dense": [float(x) for x in r["vector"]],
+                "sparse": models.SparseVector(indices=s.indices.tolist(), values=s.values.tolist())},
+        payload=to_native(r["payload"]),
+    )
+    for (_, r), s in zip(df.iterrows(), sparse)
+]
+for i in range(0, len(points), BATCH):
+    client.upsert(collection_name=COLLECTION, points=points[i : i + BATCH])
+```
+
+An existing dense collection can't be converted in place; ingest into a new collection
+name and point `[qdrant] collection` at it.

@@ -20,6 +20,13 @@ COPY requirements.txt /tmp/
 # We now install from the requirements.txt file.
 RUN pip3 install --no-cache-dir --break-system-packages -r /tmp/requirements.txt
 
+# Pre-download the default BM25 model (used only when SPARSE_MODEL is set) so hybrid
+# ingestion doesn't fetch it from the Hub on every boot. Other models are fetched at
+# runtime into the same (writable) cache.
+ENV FASTEMBED_CACHE_PATH="/opt/fastembed_cache"
+RUN python3 -c "from fastembed import SparseTextEmbedding; SparseTextEmbedding('Qdrant/bm25')" && \
+    chmod -R 777 /opt/fastembed_cache
+
 
 # Create a directory for our scripts
 RUN mkdir -p /app

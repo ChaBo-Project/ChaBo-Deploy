@@ -76,13 +76,16 @@ server comes up:
 
 1. Connects to the local Qdrant instance `start.sh` just launched (retries up to 10 times,
    5s apart, in case Qdrant isn't ready yet).
-2. Checks whether `COLLECTION_NAME` already exists. If it does, skips straight to serving
-   — **the collection is treated as already-loaded, not re-synced.**
-3. If it doesn't exist: creates it (`EMBEDDING_DIMENSION`-sized vectors, cosine distance),
+2. Checks whether `COLLECTION_NAME` already exists. If it does and its metadata has the
+   `chabo_index` marker (written after the last batch), skips straight to serving
+   — **the collection is treated as already-loaded, not re-synced.** Without the marker
+   (an interrupted start left it empty or partly filled), it is deleted and rebuilt.
+3. If it doesn't exist (or was just deleted): creates it (`EMBEDDING_DIMENSION`-sized vectors, cosine distance),
    creates a payload index on `metadata.<field>` for each `FILTERABLE_FIELDS` entry
    (`str`/`list` → keyword, `int` → integer), then pulls `EMBEDDING_DATASET` from Hugging
    Face via `datasets.load_dataset` and `client.upsert()`s it into Qdrant in
-   `BATCH_SIZE`-row batches.
+   `BATCH_SIZE`-row batches. With `SPARSE_MODEL` set, the collection is built for hybrid
+   retrieval instead (see below).
 
 The dataset is expected to have `id`, a vector column (default name `vector`, overridable
 via `VECTOR_COLUMN_NAME`), and `payload` columns; `payload` is parsed with
@@ -96,6 +99,47 @@ The payload shape (`{"text": ..., "metadata": {...}}`) matches what the orchestr
 retriever expects — `hf-spaces/qdrant/app.py`'s `query_points` reads
 `hit.payload.get("text", "")` and `hit.payload.get("metadata", {})` directly, confirming
 this on the read side.
+
+### Hybrid retrieval (optional)
+
+Set `SPARSE_MODEL` (e.g. `Qdrant/bm25`) and optionally `SPARSE_LANGUAGE` (default
+`english`; fastembed's BM25 supports 18 languages) to build a dense + BM25 collection:
+
+- a named `dense` vector (from the dataset, as before) and a `sparse` vector with
+  `modifier=IDF`, BM25-encoded at boot from each payload's `text` — the dataset needs no
+  new columns;
+- the recipe (vector names, model, language, fastembed version, text field) stored in
+  the collection metadata under `chabo_retrieval`. The orchestrator reads it at startup,
+  so its query encoding always matches the documents.
+
+Unset, the collection is built exactly as before (one unnamed dense vector). The flag only
+applies when the collection is created: an existing dense collection is never changed
+(a warning says so). A collection whose build never finished is rebuilt with the current
+settings. Storage is ephemeral, so a restart rebuilds it; on persistent storage
+use a new `COLLECTION_NAME` (and expect one rebuild of collections made before the
+`chabo_index` marker existed). An invalid model or language is logged and no collection is
+created. The `Qdrant/bm25` assets (stopword lists for all 18 languages, ~128 KB) are baked
+into the image.
+
+Only `Qdrant/bm25` is tested. Other fastembed sparse models are passed through but not
+supported: the sparse vector is always created with `modifier=IDF`, which suits BM25 but
+not neural sparse models such as SPLADE (their weights already carry term importance), and
+those models (hundreds of MB) would download on every boot.
+
+Turning on hybrid in the orchestrator also needs `[retrieval] hybrid_enabled = true`
+(orchestrator 0.9.3 or later for `[qdrant] mode = gradio`). Orchestrators that predate
+hybrid keep working against a hybrid collection, dense-only: `query_points` searches the
+`dense` vector when no `vector_name` is sent.
+
+### Gradio API
+
+- **`query_points`** — vector search. Dense-only by default; passing `sparse_vector_json`
+  (`{"indices": [...], "values": [...]}`) runs hybrid search: dense and sparse prefetches
+  (`prefetch_top_k` each, metadata filter on both) fused by weighted RRF (`dense_weight`,
+  `sparse_weight`, `rrf_k`). All hybrid arguments are optional and trail the original ones.
+- **`collection_info`** — the collection's dense/sparse vector names, point count and
+  metadata (the hybrid recipe). Read once at startup by orchestrators running hybrid in
+  gradio mode.
 
 ## Required Space secrets/variables
 
@@ -114,7 +158,8 @@ optionally `VECTOR_COLUMN_NAME` (default `vector`), `BATCH_SIZE` (default `200`)
 `[metadata_filters] filterable_fields`; indexes those fields so filtered search stays fast
 on large collections; the declared type must match the stored values — `int` only
 matches integers, `str`/`list` only strings), `QDRANT_TIMEOUT` (seconds per search
-request; unset keeps qdrant-client's default).
+request; unset keeps qdrant-client's default), `SPARSE_MODEL` / `SPARSE_LANGUAGE` (hybrid
+retrieval, see "Hybrid retrieval" above; unset = dense-only).
 
 Also optional: `QDRANT__SERVICE__READ_ONLY_API_KEY` — a read-only key for `query_points`,
 separate from the admin key `initialize_qdrant.py` uses for its write. Worth setting since
