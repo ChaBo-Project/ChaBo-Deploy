@@ -39,6 +39,9 @@ DENSE_VECTOR_NAME = "dense"
 SPARSE_VECTOR_NAME = "sparse"
 # Payload field the BM25 vectors are built from (the field the orchestrator returns as text)
 SPARSE_TEXT_FIELD = "text"
+# Collection metadata key written once every point is indexed. A collection without it was
+# left by an interrupted start (empty, partly filled, or built with other settings).
+INDEX_MARKER_KEY = "chabo_index"
 # TOKENS AND SECRETS
 embedding_token = os.getenv("DATASET_READ_TOKEN")
 qdrant_token = os.getenv("QDRANT__SERVICE__API_KEY")
@@ -85,26 +88,32 @@ def create_collection_if_not_exists(client: QdrantClient):
     # Check if collection is present
     collections = client.get_collections().collections
     if COLLECTION_NAME in [c.name for c in collections]:
-        # An empty collection means an earlier start died before indexing (e.g. out of
-        # memory); index into it instead of serving no data.
-        if not client.get_collection(COLLECTION_NAME).points_count:
-            logger.warning(
-                f"Collection '{COLLECTION_NAME}' exists but is empty (an earlier start was "
-                f"interrupted?). Indexing into it."
-            )
-            return False
-        logger.info(f"Collection '{COLLECTION_NAME}' already exists. Skipping data loading.")
-        if HYBRID:
-            sparse = client.get_collection(COLLECTION_NAME).config.params.sparse_vectors or {}
-            if SPARSE_VECTOR_NAME not in sparse:
-                logger.warning(
-                    f"SPARSE_MODEL is set but existing collection '{COLLECTION_NAME}' has no "
-                    f"'{SPARSE_VECTOR_NAME}' vector; it stays dense-only. Use a new "
-                    f"COLLECTION_NAME (or delete the collection) to rebuild it as hybrid."
-                )
-        return True # Collection found
+        info = client.get_collection(COLLECTION_NAME)
+        marker = (info.config.metadata or {}).get(INDEX_MARKER_KEY) or {}
+        if marker.get("complete"):
+            logger.info(f"Collection '{COLLECTION_NAME}' already exists. Skipping data loading.")
+            if HYBRID:
+                sparse = info.config.params.sparse_vectors or {}
+                if SPARSE_VECTOR_NAME not in sparse:
+                    logger.warning(
+                        f"SPARSE_MODEL is set but existing collection '{COLLECTION_NAME}' has no "
+                        f"'{SPARSE_VECTOR_NAME}' vector; it stays dense-only. Use a new "
+                        f"COLLECTION_NAME (or delete the collection) to rebuild it as hybrid."
+                    )
+            return True # Collection found
 
-    logger.info(f"Collection '{COLLECTION_NAME}' not found. Creating collection...")
+        # No completion marker: an earlier start was interrupted (e.g. out of memory or
+        # the startup time limit), so the collection may be empty, partly filled or built
+        # with other settings. Rebuild it from scratch rather than serve it.
+        logger.warning(
+            f"Collection '{COLLECTION_NAME}' has {info.points_count or 0} points but no "
+            f"completed build (an earlier start was interrupted?). Deleting and rebuilding it."
+        )
+        client.delete_collection(COLLECTION_NAME)
+    else:
+        logger.info(f"Collection '{COLLECTION_NAME}' not found.")
+
+    logger.info(f"Creating collection '{COLLECTION_NAME}'...")
 
     try:
         if HYBRID:
@@ -251,10 +260,19 @@ def add_sparse_vectors(points: List[models.PointStruct], encoder) -> None:
         }
 
 
-def load_and_index_data(client: QdrantClient, sparse_encoder=None) -> bool:
+def mark_index_complete(client: QdrantClient, points: int) -> None:
+    """Record a finished build in the collection metadata (merged with the stored recipe)."""
+    client.update_collection(
+        collection_name=COLLECTION_NAME,
+        metadata={INDEX_MARKER_KEY: {"complete": True, "points": points}},
+    )
+    logger.info(f"Marked collection '{COLLECTION_NAME}' as completely indexed ({points} points).")
+
+
+def load_and_index_data(client: QdrantClient, sparse_encoder=None) -> int:
     """Pulls pre-embedded data from HF and indexes it into Qdrant using client.upsert.
     With a sparse encoder, also adds a BM25 vector per point (hybrid collection).
-    Returns False if indexing failed or no point was indexed."""
+    Returns the number of points indexed; 0 if indexing failed or no point was valid."""
     logger.info(f"Starting data loading from Hugging Face dataset: {HF_DATASET_NAME}")
 
 
@@ -293,13 +311,13 @@ def load_and_index_data(client: QdrantClient, sparse_encoder=None) -> bool:
 
         if not upserted:
             logger.error("Data indexing failed: no valid points in the dataset (see SKIPPING lines above).")
-            return False
+            return 0
         logger.info(f"Data Upsert and indexing complete: {upserted} points.")
-        return True
+        return upserted
 
     except Exception as e:
         logger.error(f"Data indexing failed. Check dataset structure or network access. Error: {e}")
-        return False
+        return 0
 
 
 def main_initialization() -> bool:
@@ -343,7 +361,12 @@ def main_initialization() -> bool:
         # Indexes go in before the upload, so they are built as points arrive
         create_payload_indexes(client)
         # Dense vectors come pre-computed in the dataset; BM25 is computed here if hybrid
-        return load_and_index_data(client, sparse_encoder)
+        indexed = load_and_index_data(client, sparse_encoder)
+        if not indexed:
+            return False
+        # Only now is the collection safe to skip on the next start
+        mark_index_complete(client, indexed)
+        return True
     logger.info("Collection already populated, skipping data indexing.")
     return True
 

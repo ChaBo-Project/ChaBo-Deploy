@@ -76,9 +76,11 @@ server comes up:
 
 1. Connects to the local Qdrant instance `start.sh` just launched (retries up to 10 times,
    5s apart, in case Qdrant isn't ready yet).
-2. Checks whether `COLLECTION_NAME` already exists. If it does, skips straight to serving
-   — **the collection is treated as already-loaded, not re-synced.**
-3. If it doesn't exist: creates it (`EMBEDDING_DIMENSION`-sized vectors, cosine distance),
+2. Checks whether `COLLECTION_NAME` already exists. If it does and its metadata has the
+   `chabo_index` marker (written after the last batch), skips straight to serving
+   — **the collection is treated as already-loaded, not re-synced.** Without the marker
+   (an interrupted start left it empty or partly filled), it is deleted and rebuilt.
+3. If it doesn't exist (or was just deleted): creates it (`EMBEDDING_DIMENSION`-sized vectors, cosine distance),
    creates a payload index on `metadata.<field>` for each `FILTERABLE_FIELDS` entry
    (`str`/`list` → keyword, `int` → integer), then pulls `EMBEDDING_DATASET` from Hugging
    Face via `datasets.load_dataset` and `client.upsert()`s it into Qdrant in
@@ -112,8 +114,10 @@ Set `SPARSE_MODEL` (e.g. `Qdrant/bm25`) and optionally `SPARSE_LANGUAGE` (defaul
 
 Unset, the collection is built exactly as before (one unnamed dense vector). The flag only
 applies when the collection is created: an existing dense collection is never changed
-(a warning says so). Storage is ephemeral, so a restart rebuilds it; on persistent storage
-use a new `COLLECTION_NAME`. An invalid model or language is logged and no collection is
+(a warning says so). A collection whose build never finished is rebuilt with the current
+settings. Storage is ephemeral, so a restart rebuilds it; on persistent storage
+use a new `COLLECTION_NAME` (and expect one rebuild of collections made before the
+`chabo_index` marker existed). An invalid model or language is logged and no collection is
 created. The `Qdrant/bm25` assets (stopword lists for all 18 languages, ~128 KB) are baked
 into the image.
 
