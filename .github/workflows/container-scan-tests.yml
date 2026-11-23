@@ -1,0 +1,44 @@
+name: Container scan tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-dockerfile-scan:
+    name: Test Dockerfile scan policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.11'
+
+      - name: Install verified Trivy release
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          archive=trivy_0.76.2_Linux-64bit.tar.gz
+          curl --fail --silent --show-error --location \
+            --output "$archive" \
+            "https://github.com/aquasecurity/trivy/releases/download/v0.76.2/$archive"
+          echo "bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf  $archive" | sha256sum --check
+          mkdir -p trivy-bin
+          tar -xzf "$archive" -C trivy-bin trivy
+          "$PWD/trivy-bin/trivy" --version
+          echo "$PWD/trivy-bin" >> "$GITHUB_PATH"
+
+      - name: Run Dockerfile scan tests
+        run: bash scripts/security/test-scan-dockerfile.sh
